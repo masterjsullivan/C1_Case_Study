@@ -188,7 +188,7 @@ dim_categories = dim_categories.astype({
 # 3. fact_transactions — remove fields that also exist in line_items
 fact_transactions = transactions[[
     'transaction_id', 'check_id', 'timestamp', 'total_amount', 
-    'num_items', 'cost_center', 'top_group', 'is_beverage_on_check'
+    'num_items', 'cost_center', 'top_group', 'is_beverage_on_check', 'day_part'
 ]].copy()
 
 # Rename to be explicit
@@ -206,7 +206,8 @@ fact_transactions = fact_transactions.astype({
     'num_items': 'int32',
     'transaction_cost_center': 'string',
     'top_group': 'string',
-    'has_beverage': 'bool'
+    'has_beverage': 'bool',
+    'day_part': 'string'
 })
 
 # 4. fact_line_items — remove ALL fields that exist elsewhere
