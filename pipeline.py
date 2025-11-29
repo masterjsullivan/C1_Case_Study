@@ -47,11 +47,28 @@ raw_data['is_beverage_on_check'] = raw_data['is_beverage_on_check'].str.lower().
 # Build Dimension Tables First (with surrogate keys)
 # =========================================================
 
+# # ---- categories table (dim_categories) ----
+# categories = (
+#     raw_data[['category_main', 'sub_category', 'cost_center']]
+#     .drop_duplicates()
+#     .sort_values(['category_main', 'sub_category'])
+#     .reset_index(drop=True)
+# )
+# categories['category_id'] = categories.index + 1
+
+
+# Read pre-defined dim_categories with margin groups
+dim_categories = pd.read_excel("Data/dim_categories.xlsx", sheet_name='dim_categories')
+# Derive margin
+dim_categories['margin'] = dim_categories['margin_group'].map({'Beverage': 0.6, 'Food': 0.4, 'Snacks': 0.3})
+
+
+
 # ---- items table (dim_items) ----
 items_raw = raw_data[['item_name_clean', 'group', 'category_main', 'sub_category', 'gross_revenue', 'cost_center']].copy()
 items_raw = items_raw.rename(columns={'item_name_clean': 'item_name', 'gross_revenue': 'price'})
 
-# Use latest price per item (or average if you prefer)
+# Use latest price per item
 items = (
     items_raw
     .groupby(['item_name', 'group', 'category_main', 'sub_category', 'cost_center'], as_index=False)
@@ -63,14 +80,7 @@ items = (
 items['item_id'] = items.index + 1  
 items = items[['item_id', 'item_name', 'group', 'category_main', 'sub_category', 'price', 'cost_center']]
 
-# ---- categories table (dim_categories) ----
-categories = (
-    raw_data[['category_main', 'sub_category', 'cost_center']]
-    .drop_duplicates()
-    .sort_values(['category_main', 'sub_category'])
-    .reset_index(drop=True)
-)
-categories['category_id'] = categories.index + 1
+
 
 # ---- transactions table (fact_transactions) ----
 transactions = (
@@ -128,12 +138,51 @@ dim_items = dim_items.rename(columns={
     'cost_center': 'item_cost_center'   # ← rename to avoid conflict
 })
 
-# 2. dim_categories — keep only hierarchy
-dim_categories = categories[['category_id', 'category_main', 'sub_category', 'cost_center']].copy()
-dim_categories = dim_categories.rename(columns={
-    'category_main': 'cat_level1',
-    'sub_category': 'cat_level2',
-    'cost_center': 'cat_cost_center'   # ← avoid conflict
+# Join Margin data and category_id from category table
+dim_items = dim_items.merge(
+    dim_categories[['cat_level1', 'cat_level2', 'cat_cost_center', 'margin', 'category_id']],
+    left_on=['category', 'sub_category', 'item_cost_center'],  # Adjust column names as needed
+    right_on=['cat_level1', 'cat_level2', 'cat_cost_center'],
+    how='left'
+)
+
+# Calculate est_cost in dim_items (item-level)
+dim_items['est_cost'] = dim_items['price'] * (1 - dim_items['margin'])
+
+# Fill any missing values 0.0
+dim_items = dim_items.fillna(0)
+
+# Enforce data types
+dim_items = dim_items.astype({
+    'item_id': 'int32',
+    'item_name': 'string',
+    'group': 'string',
+    'category': 'string',
+    'sub_category': 'string',
+    'price': 'float32',
+    'item_cost_center': 'string',
+    'margin': 'float32',
+    'est_cost': 'float32',
+    'category_id': 'int32'
+})
+
+# # 2. dim_categories 
+# *Commented in favor of static categories table loaded above
+# dim_categories = categories[['category_id', 'category_main', 'sub_category', 'cost_center']].copy()
+# dim_categories = dim_categories.rename(columns={
+#     'category_main': 'cat_level1',
+#     'sub_category': 'cat_level2',
+#     'cost_center': 'cat_cost_center'   # ← avoid conflict
+# })
+
+# Enforce data types
+dim_categories = dim_categories.astype({
+    'category_id': 'int32',
+    'cat_level1': 'string',
+    'cat_level2': 'string',
+    'cat_cost_center': 'string',
+    'margin_group': 'string',
+    'margin': 'float32'
 })
 
 # 3. fact_transactions — remove fields that also exist in line_items
@@ -142,17 +191,51 @@ fact_transactions = transactions[[
     'num_items', 'cost_center', 'top_group', 'is_beverage_on_check'
 ]].copy()
 
-# Optional: rename to be super explicit
+# Rename to be explicit
 fact_transactions = fact_transactions.rename(columns={
     'cost_center': 'transaction_cost_center',
     'is_beverage_on_check': 'has_beverage'
 })
 
+# Enforce data types
+fact_transactions = fact_transactions.astype({
+    'transaction_id': 'int32',
+    'check_id': 'int32',
+    'timestamp': 'datetime64[ns]',
+    'total_amount': 'float32',
+    'num_items': 'int32',
+    'transaction_cost_center': 'string',
+    'top_group': 'string',
+    'has_beverage': 'bool'
+})
+
 # 4. fact_line_items — remove ALL fields that exist elsewhere
 fact_line_items = line_items_final[[
     'line_item_id', 'transaction_id', 'item_id', 'gross_revenue'
-    # ← ONLY these four! Remove timestamp, day_part, is_beverage_on_check
 ]].copy()
+
+# Or, for transaction-level, add to fact_line_items after joining item_id
+fact_line_items = fact_line_items.merge(
+    dim_items[['item_id', 'margin']],
+    on='item_id',
+    how='left'
+)
+
+fact_line_items['est_cost'] = fact_line_items['gross_revenue'] * (1 - fact_line_items['margin'])
+
+fact_line_items['est_cost'] = fact_line_items['gross_revenue'] * (1 - fact_line_items['margin'])
+fact_line_items['est_profit'] = fact_line_items['gross_revenue'] - fact_line_items['est_cost']
+
+# Enforce data tpyes
+fact_line_items = fact_line_items.astype({
+    'line_item_id': 'int32',
+    'transaction_id': 'int32',
+    'item_id': 'int32',
+    'gross_revenue': 'float32',
+    'margin': 'float32',
+    'est_cost': 'float32',
+    'est_profit': 'float32'
+})
 
 # Load cleaned tables to the database
 # ==============================================
@@ -163,8 +246,8 @@ fact_transactions.to_sql('fact_transactions', engine, if_exists='replace', index
 fact_line_items.to_sql('fact_line_items', engine, if_exists='replace', index=False)
 
 
-print("Pipeline executed successfully. Summary of loaded tables:")
-print(f"- {len(items)} items")
-print(f"- {len(categories)} categories")
-print(f"- {len(transactions)} transactions")
-print(f"- {len(line_items_final)} line items")
+print("Pipeline executed successfully. Summary of loaded tables and rows:")
+print(f"- dim_items > {len(dim_items)} items")
+print(f"- dim_categories > {len(dim_categories)} categories")
+print(f"- fact_transactions > {len(fact_transactions)} transactions")
+print(f"- fact_line_items > {len(fact_line_items)} line items")
