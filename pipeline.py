@@ -1,6 +1,7 @@
 # pipeline.py - Fully Relational Version with Proper Foreign Keys
 import pandas as pd
 import sqlalchemy
+import unicodedata
 
 # Create SQLAlchemy engine
 engine = sqlalchemy.create_engine("sqlite:///C1_case_study.db")
@@ -28,7 +29,49 @@ raw_data.columns = (
 
 # Split item_name into group and clean item name
 raw_data['group'] = raw_data['item_name'].str.split(' - ', n=1).str[0].fillna(raw_data['item_name'])
-raw_data['item_name_clean'] = raw_data['item_name'].str.split(' - ', n=1).str[-1].fillna(raw_data['item_name'])
+raw_data['item_name'] = raw_data['item_name'].str.split(' - ', n=1).str[-1].fillna(raw_data['item_name'])
+
+# Deduplication Process to remove day_part and category artifacts
+# ================================================================
+
+# Capture state before deduplication
+rows_before = len(raw_data)
+revenue_before = raw_data['gross_revenue'].sum()
+
+# Normalize category (removes accents, makes "Entree" == "Entrée")
+import unicodedata
+raw_data['category_norm'] = raw_data['category'].astype(str).apply(lambda x: unicodedata.normalize('NFKD', x).encode('ascii', 'ignore').decode('utf-8'))
+
+# Core grouping keys – exclude gross_revenue and group to avoid over-collapse
+group_keys = ['check_id', 'item_name', 'date', 'sale_time_exact', 'is_beverage_on_check', 'cost_center', 'category_norm']
+
+# Deduplicate
+deduped = raw_data.groupby(group_keys, as_index=False).agg({
+    'gross_revenue': 'max',
+    'category': lambda x: x.mode()[0] if not x.mode().empty else x.iloc[0],
+    'day_part': lambda x: x.mode()[0] if not x.mode().empty else x.iloc[0],
+    'group': 'first'  
+})
+
+# Drop the temporary normalized column
+deduped = deduped.drop(columns=['category_norm'])
+
+# Capture state AFTER deduplication
+rows_after = len(deduped)
+revenue_after = deduped['gross_revenue'].sum()
+
+rows_removed = rows_before - rows_after
+rows_removed_pct = 100 * rows_removed / rows_before
+
+revenue_correction = revenue_before - revenue_after
+revenue_correction_pct = 100 * revenue_correction / revenue_before
+
+# Print deduplication summary
+print(f"Rows removed        : {rows_removed:,} ({rows_removed_pct:.2f}% of total rows)")
+print(f"Revenue corrected   : ${revenue_correction:,.2f} ({revenue_correction_pct:.2f}% of original revenue)")
+
+# Replace raw_data with the cleaned version for the rest of the pipeline
+raw_data = deduped.copy()
 
 # Split category into main and sub-category
 raw_data['category_main'] = raw_data['category'].str.split('>', n=1).str[0].str.strip()
@@ -65,21 +108,23 @@ dim_categories['margin'] = dim_categories['margin_group'].map({'Beverage': 0.6, 
 
 
 # ---- items table (dim_items) ----
-items_raw = raw_data[['item_name_clean', 'group', 'category_main', 'sub_category', 'gross_revenue', 'cost_center']].copy()
-items_raw = items_raw.rename(columns={'item_name_clean': 'item_name', 'gross_revenue': 'price'})
+items_raw = raw_data[['item_name', 'group', 'category_main', 'sub_category', 'gross_revenue', 'cost_center']].copy()
 
-# Use latest price per item
-items = (
-    items_raw
-    .groupby(['item_name', 'group', 'category_main', 'sub_category', 'cost_center'], as_index=False)
-    .agg(price=('price', 'max'))  
-    .sort_values('item_name')
-    .reset_index(drop=True)
+# Find the most common non-zero gross_revenue per item for the unit price
+mode_price = (
+    items_raw[items_raw['gross_revenue'] > 0]
+    .groupby(['item_name', 'group', 'category_main', 'sub_category', 'cost_center'])
+    ['gross_revenue']
+    .agg(lambda x: x.mode()[0] if not x.mode().empty else x.iloc[0])
+    .reset_index(name='unit_price')
 )
 
-items['item_id'] = items.index + 1  
-items = items[['item_id', 'item_name', 'group', 'category_main', 'sub_category', 'price', 'cost_center']]
+# Merge back and create final dim_items
+items = mode_price.copy()
+items = items.rename(columns={'unit_price': 'price'})
 
+items['item_id'] = range(1, len(items) + 1)
+items = items[['item_id', 'item_name', 'group', 'category_main', 'sub_category', 'price', 'cost_center']]
 
 
 # ---- transactions table (fact_transactions) ----
@@ -102,10 +147,9 @@ transactions = transactions[['transaction_id', 'check_id', 'timestamp', 'total_a
 # ===========================================
 
 # Start from raw data
-line_items = raw_data[['check_id', 'item_name_clean', 'gross_revenue', 'timestamp', 
+line_items = raw_data[['check_id', 'item_name', 'gross_revenue', 'timestamp', 
                        'day_part', 'is_beverage_on_check', 'group', 'category_main', 
                        'sub_category', 'cost_center']].copy()
-line_items = line_items.rename(columns={'item_name_clean': 'item_name'})
 
 # Merge with items on ALL unique keys
 line_items = line_items.merge(
@@ -203,7 +247,7 @@ fact_transactions = fact_transactions.astype({
     'check_id': 'int32',
     'timestamp': 'datetime64[ns]',
     'total_amount': 'float32',
-    'num_items': 'int32',
+    #Removed in favor of line_items quantity 'num_items': 'int32',
     'transaction_cost_center': 'string',
     'top_group': 'string',
     'has_beverage': 'bool',
@@ -215,17 +259,38 @@ fact_line_items = line_items_final[[
     'line_item_id', 'transaction_id', 'item_id', 'gross_revenue'
 ]].copy()
 
-# Or, for transaction-level, add to fact_line_items after joining item_id
+# Merge in margin and price from dim_items for calculations
 fact_line_items = fact_line_items.merge(
-    dim_items[['item_id', 'margin']],
+    dim_items[['item_id', 'margin', 'price']],
     on='item_id',
     how='left'
 )
 
 fact_line_items['est_cost'] = fact_line_items['gross_revenue'] * (1 - fact_line_items['margin'])
-
-fact_line_items['est_cost'] = fact_line_items['gross_revenue'] * (1 - fact_line_items['margin'])
 fact_line_items['est_profit'] = fact_line_items['gross_revenue'] - fact_line_items['est_cost']
+
+# Add quantity based on multiples of price
+fact_line_items['quantity'] = fact_line_items['gross_revenue'] / fact_line_items['price']
+fact_line_items['quantity'] = fact_line_items['quantity'].fillna(0).round().astype('int32')
+
+# Test quantity consistency
+non_zero = fact_line_items[fact_line_items['gross_revenue'] > 0]
+integer_qty = non_zero['quantity'].apply(lambda x: x == int(x)).sum()
+integer_pct = (integer_qty / len(non_zero)) * 100 if len(non_zero) > 0 else 0
+
+print(f"Quantity consistency: {integer_qty:,} integer quantities out of {len(non_zero):,} non-zero rows ({integer_pct:.2f}%)")
+
+# Fill NAs with 0 before type enforcement
+fact_line_items = fact_line_items.fillna({
+    'line_item_id': 0,
+    'transaction_id': 0,
+    'item_id': 0,
+    'gross_revenue': 0,
+    'margin': 0,
+    'est_cost': 0,
+    'est_profit': 0,
+    'quantity': 1
+})
 
 # Enforce data tpyes
 fact_line_items = fact_line_items.astype({
