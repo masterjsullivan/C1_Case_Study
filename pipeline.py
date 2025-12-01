@@ -1,4 +1,9 @@
-# pipeline.py - Fully Relational Version with Proper Foreign Keys
+# This is the main ETL pipeline script for the C1 Case Study project.
+# It extracts raw POS data, transforms it into a star schema format,
+# performs data cleaning, standardization and deduplication,
+# and loads the cleaned data into a SQLite database for analysis.
+
+
 import pandas as pd
 import sqlalchemy
 import unicodedata
