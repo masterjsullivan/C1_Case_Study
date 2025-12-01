@@ -14,6 +14,7 @@ from tqdm import tqdm
 # Create SQLAlchemy engine
 engine = sqlalchemy.create_engine("sqlite:///Data/C1_case_study.db")
 
+print("Starting ETL pipeline.")
 
 # Load Raw Data
 # ======================
@@ -315,6 +316,7 @@ fact_line_items = fact_line_items.astype({
 # Use Gemini API to estimate Nutri-Score for each unique item
 # =========================================================
 
+
 # Initialize the Estimator class
 my_api_key = Path('api_key.txt').read_text()
 
@@ -337,6 +339,7 @@ dim_items['nutri_score'] = dim_items.progress_apply(
 )
 
 print("--- AI Scoring Complete ---\n")
+
 
 
 # Load cleaned tables to the database
