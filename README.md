@@ -21,6 +21,8 @@ As outlined in the strategic brief, this project aims to:
 │   ├── dim_categories.xlsx    # Static dimension table for margin mapping
 │   └── C1_case_study.db       # Output SQLite database
 ├── pipeline.py                # Main ETL script
+├── nutriscore.py              # Contains NutriScoreEstimator class
+├── analysis.py                # Notebook for ad-hoc analysis
 ├── whiteboard.ipynb           # Notebook for WIP code development
 ├── requirements.txt           # Python dependencies
 └── README.md                  # Project documentation
