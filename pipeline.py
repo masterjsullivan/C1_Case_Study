@@ -9,7 +9,7 @@ import sqlalchemy
 import unicodedata
 
 # Create SQLAlchemy engine
-engine = sqlalchemy.create_engine("sqlite:///C1_case_study.db")
+engine = sqlalchemy.create_engine("sqlite:///Data/C1_case_study.db")
 
 
 # Load Raw Data
