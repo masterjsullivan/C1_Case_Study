@@ -7,6 +7,9 @@
 import pandas as pd
 import sqlalchemy
 import unicodedata
+from nutriscore import NutriScoreEstimator
+from pathlib import Path
+from tqdm import tqdm
 
 # Create SQLAlchemy engine
 engine = sqlalchemy.create_engine("sqlite:///Data/C1_case_study.db")
@@ -307,6 +310,34 @@ fact_line_items = fact_line_items.astype({
     'est_cost': 'float32',
     'est_profit': 'float32'
 })
+
+
+# Use Gemini API to estimate Nutri-Score for each unique item
+# =========================================================
+
+# Initialize the Estimator class
+my_api_key = Path('api_key.txt').read_text()
+
+estimator = NutriScoreEstimator(api_key=my_api_key)
+
+print("\ntarting Gemini AI Nutrition Scoring")
+print(f"Scoring{len(dim_items)} unique items")
+
+# Tqdm progress bar for better visibility
+tqdm.pandas(desc="Scoring Items")
+
+# Apply the method to the DataFrame
+dim_items['nutri_score'] = dim_items.progress_apply(
+    lambda row: estimator.estimate_score(
+        item_name=row['item_name'], 
+        category=row['category'], 
+        sub_category=row['sub_category']
+    ), 
+    axis=1
+)
+
+print("--- AI Scoring Complete ---\n")
+
 
 # Load cleaned tables to the database
 # ==============================================
