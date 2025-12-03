@@ -1,7 +1,6 @@
 # Compass One Healthcare Case Study: Hospital Retail Strategy
 
 ## Project Overview
-**Role:** Business Insights Manager  
 **Client:** Two hospital retail sites (currently operated by separate companies) located 1 mile apart.  
 **Objective:** Analyze Point of Sale (POS) data to provide recommended adjustments to operations, pricing, and menu mix to improve the bottom line prior to operational takeover.
 
