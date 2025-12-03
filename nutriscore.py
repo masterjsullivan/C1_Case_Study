@@ -43,10 +43,10 @@ class NutriScoreEstimator:
             if score in ['A', 'B', 'C', 'D', 'E']:
                 return score
             else:
-                return 'C' # Default to Average if output is ambiguous
+                return 'C' 
                 
         except Exception as e:
             print(f"Error scoring {item_name}: {e}")
             # Simple rate limit handling: wait and retry once if needed
             time.sleep(1) 
-            return 'C' # Fallback
+            return 'C'
