@@ -1,7 +1,7 @@
 # Compass One Healthcare Case Study: Hospital Retail Strategy
 
 ## Project Overview
-**Client:** Two hospital retail sites (currently operated by separate companies) located 1 mile apart.  
+**Client:** Two hospital retail dining sites (currently operated by separate companies) located 1 mile apart.  
 **Objective:** Analyze Point of Sale (POS) data to provide recommended adjustments to operations, pricing, and menu mix to improve the bottom line prior to operational takeover.
 
 This repository contains the **ETL (Extract, Transform, Load) pipeline** used to process raw POS data, standardize it, and load it into a relational database (SQLite) for downstream analysis.
